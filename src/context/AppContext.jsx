@@ -1,5 +1,6 @@
-import { createContext, useContext, useReducer, useEffect } from 'react';
+import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { saveUserData, loadUserData } from '../utils/firebase';
 
 const AppContext = createContext();
 
@@ -29,7 +30,9 @@ const initialState = {
   habitLog: {},
   journalEntries: [],
   reminders: [],
-  completedCelebration: false
+  completedCelebration: false,
+  cloudSyncEnabled: false,
+  lastSynced: null
 };
 
 function appReducer(state, action) {
@@ -48,14 +51,22 @@ function appReducer(state, action) {
       return {
         ...state,
         walletAddress: action.payload,
-        isGuest: false
+        isGuest: false,
+        cloudSyncEnabled: true
       };
       
     case 'DISCONNECT_WALLET':
       return {
         ...state,
         walletAddress: null,
-        isGuest: true
+        isGuest: true,
+        cloudSyncEnabled: false
+      };
+      
+    case 'SET_CLOUD_SYNCED':
+      return {
+        ...state,
+        lastSynced: new Date().toISOString()
       };
       
     case 'UPDATE_STREAK': {
@@ -245,17 +256,42 @@ export function AppProvider({ children }) {
       try {
         const parsed = JSON.parse(savedData);
         dispatch({ type: 'LOAD_STATE', payload: parsed });
+        
+        if (parsed.walletAddress) {
+          loadFromCloud(parsed.walletAddress);
+        }
       } catch (e) {
         console.error('Failed to load saved data:', e);
+        dispatch({ type: 'INIT_USER' });
       }
     } else {
       dispatch({ type: 'INIT_USER' });
     }
   }, []);
   
+  const loadFromCloud = async (walletAddress) => {
+    const cloudData = await loadUserData(walletAddress);
+    if (cloudData) {
+      dispatch({ type: 'LOAD_STATE', payload: cloudData });
+    }
+  };
+  
   useEffect(() => {
     if (state.userId) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+  }, [state]);
+  
+  useEffect(() => {
+    if (state.walletAddress && state.cloudSyncEnabled) {
+      const syncTimeout = setTimeout(async () => {
+        const success = await saveUserData(state.walletAddress, state);
+        if (success) {
+          dispatch({ type: 'SET_CLOUD_SYNCED' });
+        }
+      }, 2000);
+      
+      return () => clearTimeout(syncTimeout);
     }
   }, [state]);
   
@@ -265,8 +301,26 @@ export function AppProvider({ children }) {
     }
   }, [state.userId]);
   
+  const connectWallet = useCallback(async (address) => {
+    dispatch({ type: 'CONNECT_WALLET', payload: address });
+    
+    const cloudData = await loadUserData(address);
+    if (cloudData) {
+      const localProgress = Object.keys(state.progress).length;
+      const cloudProgress = cloudData.progress ? Object.keys(cloudData.progress).length : 0;
+      
+      if (cloudProgress > 0 && cloudProgress >= localProgress) {
+        dispatch({ type: 'LOAD_STATE', payload: { ...cloudData, walletAddress: address, isGuest: false, cloudSyncEnabled: true } });
+      } else if (localProgress > 0) {
+        await saveUserData(address, { ...state, walletAddress: address });
+      }
+    } else {
+      await saveUserData(address, { ...state, walletAddress: address });
+    }
+  }, [state]);
+  
   return (
-    <AppContext.Provider value={{ state, dispatch }}>
+    <AppContext.Provider value={{ state, dispatch, connectWallet }}>
       {children}
     </AppContext.Provider>
   );
