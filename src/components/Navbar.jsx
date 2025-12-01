@@ -11,7 +11,9 @@ import {
   Menu,
   X,
   Wallet,
-  LogOut
+  LogOut,
+  Cloud,
+  CloudOff
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -27,7 +29,7 @@ const navItems = [
 
 export default function Navbar({ currentPage, setCurrentPage }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { state, dispatch } = useApp();
+  const { state, dispatch, connectWallet } = useApp();
   
   const handleConnect = async () => {
     if (typeof window.ethereum !== 'undefined') {
@@ -35,12 +37,12 @@ export default function Navbar({ currentPage, setCurrentPage }) {
         const accounts = await window.ethereum.request({ 
           method: 'eth_requestAccounts' 
         });
-        dispatch({ type: 'CONNECT_WALLET', payload: accounts[0] });
+        await connectWallet(accounts[0]);
       } catch (error) {
         console.error('Failed to connect wallet:', error);
       }
     } else {
-      alert('Please install MetaMask or another Web3 wallet');
+      alert('Please install MetaMask or another Web3 wallet to sync progress across devices');
     }
   };
   
@@ -89,10 +91,17 @@ export default function Navbar({ currentPage, setCurrentPage }) {
             
             <div className="flex items-center gap-4">
               {state.walletAddress ? (
-                <div className="hidden md:flex items-center gap-2">
-                  <span className="text-sm text-[#39ff14] font-mono">
-                    {formatAddress(state.walletAddress)}
-                  </span>
+                <div className="hidden md:flex items-center gap-3">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#1a1a24] border border-[#2a2a3a]">
+                    {state.cloudSyncEnabled ? (
+                      <Cloud size={14} className="text-[#39ff14]" />
+                    ) : (
+                      <CloudOff size={14} className="text-gray-500" />
+                    )}
+                    <span className="text-sm text-[#39ff14] font-mono">
+                      {formatAddress(state.walletAddress)}
+                    </span>
+                  </div>
                   <button
                     onClick={handleDisconnect}
                     className="p-2 text-gray-400 hover:text-red-500 transition-colors"
@@ -107,7 +116,7 @@ export default function Navbar({ currentPage, setCurrentPage }) {
                   className="hidden md:flex items-center gap-2 btn-secondary text-sm py-2 px-4"
                 >
                   <Wallet size={16} />
-                  Connect Wallet
+                  Connect & Sync
                 </button>
               )}
               
@@ -157,9 +166,16 @@ export default function Navbar({ currentPage, setCurrentPage }) {
               <div className="pt-4 border-t border-[#2a2a3a]">
                 {state.walletAddress ? (
                   <div className="flex items-center justify-between px-4 py-3">
-                    <span className="text-sm text-[#39ff14] font-mono">
-                      {formatAddress(state.walletAddress)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {state.cloudSyncEnabled ? (
+                        <Cloud size={16} className="text-[#39ff14]" />
+                      ) : (
+                        <CloudOff size={16} className="text-gray-500" />
+                      )}
+                      <span className="text-sm text-[#39ff14] font-mono">
+                        {formatAddress(state.walletAddress)}
+                      </span>
+                    </div>
                     <button
                       onClick={handleDisconnect}
                       className="text-red-500"
@@ -173,8 +189,14 @@ export default function Navbar({ currentPage, setCurrentPage }) {
                     className="w-full flex items-center justify-center gap-2 btn-primary"
                   >
                     <Wallet size={18} />
-                    Connect Wallet
+                    Connect Wallet & Sync
                   </button>
+                )}
+                
+                {!state.walletAddress && (
+                  <p className="text-xs text-gray-500 text-center mt-2 px-4">
+                    Connect wallet to save progress to cloud
+                  </p>
                 )}
               </div>
             </div>
