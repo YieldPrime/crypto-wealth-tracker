@@ -6,7 +6,7 @@ const AppContext = createContext();
 
 const STORAGE_KEY = 'gg-mindset-vault-data';
 
-const initialState = {
+const getInitialState = () => ({
   // Auth
   user: null,
   isLoggedIn: false,
@@ -27,7 +27,7 @@ const initialState = {
   connectedWallet: null,
   
   // App data
-  userId: null,
+  userId: uuidv4(),
   xp: 0,
   streak: 0,
   lastVisit: null,
@@ -51,7 +51,7 @@ const initialState = {
   completedCelebration: false,
   cloudSyncEnabled: false,
   lastSynced: null
-};
+});
 
 function appReducer(state, action) {
   switch (action.type) {
@@ -67,27 +67,22 @@ function appReducer(state, action) {
         cloudSyncEnabled: !!action.payload
       };
       
-    case 'LOGOUT':
+    case 'LOAD_CLOUD_DATA':
+      // Completely replace state with cloud data
       return {
-        ...initialState,
-        authLoading: false
-      };
-      
-    case 'LOAD_STATE':
-      return { 
-        ...state, 
+        ...state,
         ...action.payload,
         user: state.user,
         isLoggedIn: state.isLoggedIn,
-        authLoading: state.authLoading,
-        cloudSyncEnabled: state.cloudSyncEnabled
+        authLoading: false,
+        cloudSyncEnabled: true
       };
       
-    case 'INIT_USER':
-      return {
-        ...state,
-        userId: state.userId || uuidv4(),
-        lastVisit: new Date().toISOString()
+    case 'LOAD_LOCAL_DATA':
+      return { 
+        ...state, 
+        ...action.payload,
+        authLoading: false
       };
       
     case 'UPDATE_PROFILE':
@@ -316,47 +311,55 @@ function appReducer(state, action) {
 }
 
 export function AppProvider({ children }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  const [state, dispatch] = useReducer(appReducer, null, getInitialState);
   const isInitialized = useRef(false);
   const syncTimeoutRef = useRef(null);
+  const lastSavedRef = useRef('');
   
   // Listen for auth state changes
   useEffect(() => {
     const unsubscribe = onAuthChange(async (user) => {
+      console.log('Auth state changed:', user ? user.email : 'logged out');
+      
       if (user) {
         dispatch({ type: 'SET_USER', payload: user });
         
-        // Load user data from cloud
+        // ALWAYS load from cloud when user logs in
+        console.log('Loading data from cloud for:', user.uid);
         const cloudData = await loadUserData(user.uid);
+        
         if (cloudData) {
-          dispatch({ type: 'LOAD_STATE', payload: cloudData });
-          dispatch({ type: 'UPDATE_PROFILE', payload: {
-            displayName: user.displayName || cloudData.profile?.displayName || '',
-            email: user.email || ''
-          }});
+          console.log('Cloud data found, loading...');
+          dispatch({ type: 'LOAD_CLOUD_DATA', payload: cloudData });
         } else {
-          dispatch({ type: 'UPDATE_PROFILE', payload: {
-            displayName: user.displayName || '',
-            email: user.email || ''
-          }});
+          console.log('No cloud data, starting fresh');
         }
-        dispatch({ type: 'INIT_USER' });
+        
+        // Update profile with user info
+        dispatch({ type: 'UPDATE_PROFILE', payload: {
+          displayName: user.displayName || '',
+          email: user.email || ''
+        }});
+        
         dispatch({ type: 'UPDATE_STREAK' });
+        
       } else {
+        // User logged out - load from localStorage
         dispatch({ type: 'SET_USER', payload: null });
-        // Load from localStorage for guests
+        
         const savedData = localStorage.getItem(STORAGE_KEY);
         if (savedData) {
           try {
             const parsed = JSON.parse(savedData);
-            dispatch({ type: 'LOAD_STATE', payload: parsed });
+            dispatch({ type: 'LOAD_LOCAL_DATA', payload: parsed });
           } catch (e) {
-            console.error('Failed to load saved data:', e);
+            console.error('Failed to load local data:', e);
           }
         }
-        dispatch({ type: 'INIT_USER' });
+        
         dispatch({ type: 'UPDATE_STREAK' });
       }
+      
       isInitialized.current = true;
     });
     
@@ -369,12 +372,38 @@ export function AppProvider({ children }) {
     if (!state.isLoggedIn && state.userId) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
-  }, [state]);
+  }, [state, state.isLoggedIn, state.userId]);
   
-  // Sync to cloud for logged in users (debounced)
+  // Sync to cloud for logged in users
   useEffect(() => {
     if (!isInitialized.current) return;
     if (!state.isLoggedIn || !state.user) return;
+    
+    const dataToSave = {
+      profile: state.profile,
+      wallets: state.wallets,
+      connectedWallet: state.connectedWallet,
+      xp: state.xp,
+      streak: state.streak,
+      lastVisit: state.lastVisit,
+      progress: state.progress,
+      goals: state.goals,
+      profitBookings: state.profitBookings,
+      portfolioAllocation: state.portfolioAllocation,
+      dreamList: state.dreamList,
+      bankBackupBalance: state.bankBackupBalance,
+      bankBackupTarget: state.bankBackupTarget,
+      monthlyIncome: state.monthlyIncome,
+      habitLog: state.habitLog,
+      journalEntries: state.journalEntries,
+      reminders: state.reminders,
+      completedCelebration: state.completedCelebration
+    };
+    
+    const dataString = JSON.stringify(dataToSave);
+    
+    // Only sync if data actually changed
+    if (dataString === lastSavedRef.current) return;
     
     // Clear previous timeout
     if (syncTimeoutRef.current) {
@@ -383,32 +412,14 @@ export function AppProvider({ children }) {
     
     // Debounce sync
     syncTimeoutRef.current = setTimeout(async () => {
-      const dataToSave = {
-        profile: state.profile,
-        wallets: state.wallets,
-        connectedWallet: state.connectedWallet,
-        xp: state.xp,
-        streak: state.streak,
-        lastVisit: state.lastVisit,
-        progress: state.progress,
-        goals: state.goals,
-        profitBookings: state.profitBookings,
-        portfolioAllocation: state.portfolioAllocation,
-        dreamList: state.dreamList,
-        bankBackupBalance: state.bankBackupBalance,
-        bankBackupTarget: state.bankBackupTarget,
-        monthlyIncome: state.monthlyIncome,
-        habitLog: state.habitLog,
-        journalEntries: state.journalEntries,
-        reminders: state.reminders,
-        completedCelebration: state.completedCelebration
-      };
-      
+      console.log('Syncing to cloud...');
       const success = await saveUserData(state.user.uid, dataToSave);
       if (success) {
+        lastSavedRef.current = dataString;
         dispatch({ type: 'SET_CLOUD_SYNCED' });
+        console.log('Sync complete');
       }
-    }, 1500);
+    }, 1000);
     
     return () => {
       if (syncTimeoutRef.current) {
@@ -423,6 +434,7 @@ export function AppProvider({ children }) {
     state.connectedWallet,
     state.xp,
     state.streak,
+    state.lastVisit,
     state.progress,
     state.goals,
     state.profitBookings,
@@ -439,8 +451,9 @@ export function AppProvider({ children }) {
   
   const handleLogout = useCallback(async () => {
     await logOut();
-    dispatch({ type: 'LOGOUT' });
     localStorage.removeItem(STORAGE_KEY);
+    // Refresh page to reset everything
+    window.location.reload();
   }, []);
   
   const connectWallet = useCallback(async () => {
